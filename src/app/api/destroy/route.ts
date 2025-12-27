@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSubtitles } from 'youtube-caption-extractor';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { extractVideoId } from '@/lib/youtube';
+import Groq from 'groq-sdk';
 
 export async function POST(req: NextRequest) {
     try {
@@ -11,10 +11,11 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'URL is required' }, { status: 400 });
         }
 
-        const apiKey = userApiKey || process.env.GEMINI_API_KEY;
+        // Use Groq API Key (Env or User provided)
+        const apiKey = userApiKey || process.env.GROQ_API_KEY;
 
         if (!apiKey) {
-            return NextResponse.json({ error: 'Gemini API Key is required. Please add it in settings or set GEMINI_API_KEY on the server.' }, { status: 400 });
+            return NextResponse.json({ error: 'Groq API Key (GROQ_API_KEY) missing. Get one for free at console.groq.com' }, { status: 400 });
         }
 
         const videoId = extractVideoId(url);
@@ -202,9 +203,8 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Fatal error fetching video data.' }, { status: 500 });
         }
 
-        // Initialize Gemini
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+        // Initialize Groq
+        const groq = new Groq({ apiKey });
 
         const prompt = `
 You are a "De-Clickbaiter". Your mission is to reveal the actual answer/secret behind a YouTube video's clickbait title.
@@ -223,17 +223,24 @@ DATA TO ANALYZE:
 ${transcriptText.substring(0, 30000)}
 `;
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const truth = response.text();
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: "user",
+                    content: prompt,
+                },
+            ],
+            model: "llama-3.3-70b-versatile", // Stable high-performance 70B model
+            temperature: 0.5,
+            max_tokens: 500,
+        });
+
+        const truth = chatCompletion.choices[0]?.message?.content || "AI failed to respond.";
 
         return NextResponse.json({
             truth,
             videoId,
-            // Rough estimation: sum of durations / 60
-            // But we can just use a placeholder or better logic if we had duration.
-            // For now, let's assume we saved them "some" time based on character count (rough proxy for length)
-            timeSaved: Math.ceil(transcriptText.split(' ').length / 150) // Assuming 150 words per minute
+            timeSaved: Math.ceil(transcriptText.split(' ').length / 150)
         });
 
     } catch (error: unknown) {
