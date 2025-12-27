@@ -116,14 +116,69 @@ export async function POST(req: NextRequest) {
                 }
             }
 
+            // Attempt 5: Mobile Site (Often less protected)
+            if (!transcriptText) {
+                try {
+                    console.log('Attempting Mobile Scraping...');
+                    const mobileRes = await fetch(`https://m.youtube.com/watch?v=${videoId}`, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+                        }
+                    });
+                    const mobileHtml = await mobileRes.text();
+                    const mobilePlayerRegex = /"captions":\s*({.*?}),\s*"videoDetails"/;
+                    const mobilePlayerMatch = mobileHtml.match(mobilePlayerRegex);
+                    if (mobilePlayerMatch && mobilePlayerMatch[1]) {
+                        const playerResponse = JSON.parse(mobilePlayerMatch[1]);
+                        const captionTracks = playerResponse.playerCaptionsTracklistRenderer?.captionTracks;
+                        if (captionTracks && captionTracks.length > 0) {
+                            const track = captionTracks.find((t: any) => t.languageCode === 'en') || captionTracks[0];
+                            const transcriptRes = await fetch(track.baseUrl);
+                            const transcriptXml = await transcriptRes.text();
+                            const segments = transcriptXml.match(/<text[^>]*>([\s\S]*?)<\/text>/g);
+                            if (segments) {
+                                transcriptText = segments.map(s => s.replace(/<text[^>]*>([\s\S]*?)<\/text>/, '$1').replace(/&amp;/g, '&').replace(/&#39;/g, "'")).join(' ');
+                                console.log('Success with Mobile Scraping');
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.log('Mobile Scraping failed');
+                }
+            }
+
+            // --- FINAL EMERGENCY FALLBACK: TITLE & DESCRIPTION ONLY ---
             if (!transcriptText || transcriptText.trim().length < 50) {
+                console.log('--- ALL TRANSCRIPT ATTEMPTS FAILED. RESORTING TO METADATA ---');
+                try {
+                    const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                        }
+                    });
+                    const html = await pageRes.text();
+
+                    const titleMatch = html.match(/<title>(.*?)<\/title>/);
+                    const descMatch = html.match(/"shortDescription":"(.*?)"/);
+
+                    const title = titleMatch ? titleMatch[1].replace(' - YouTube', '') : 'Unknown Title';
+                    const description = descMatch ? descMatch[1].substring(0, 1000) : 'No description available';
+
+                    transcriptText = `[MODE: METADATA ONLY (Transcript blocked by YouTube)]\n\nVideo Title: ${title}\n\nVideo Description snippets: ${description}`;
+                    console.log('Using Metadata Fallback (Title/Description)');
+                } catch (e) {
+                    console.error('Metadata fallback also failed');
+                }
+            }
+
+            if (!transcriptText || transcriptText.trim().length < 20) {
                 console.error('All transcript fetch attempts failed for:', videoId);
                 return NextResponse.json({
-                    error: 'YouTube is blocking cloud servers (Vercel) from fetching this script. This usually happens with auto-generated captions. Try a video with manual captions or a more popular video.'
+                    error: 'YouTube is completely blocking the server and no metadata could be retrieved. Please try again later or try a different video.'
                 }, { status: 400 });
             }
 
-            console.log('Final Transcript Length:', transcriptText.length);
+            console.log('Final Data Length:', transcriptText.length);
         } catch (e) {
             console.error('Unexpected error in transcript logic:', e);
             return NextResponse.json({
@@ -136,12 +191,17 @@ export async function POST(req: NextRequest) {
         const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
         const prompt = `
-You are a Clickbait Destroyer. The user will give you a YouTube video transcript. 
+You are a Clickbait Destroyer. The user will give you a YouTube video transcript OR metadata (title/description). 
 Your job is to find the specific answer to the video's implied hook or title. 
 Do NOT summarize the whole video. Just answer the question or reveal the secret immediately. 
 Be sarcastic and brief. 
 
 CRITICAL: You MUST respond in ${language}.
+
+${transcriptText.startsWith('[MODE: METADATA ONLY') ? `
+IMPORTANT: You don't have the full transcript because YouTube blocked the fetch.
+Try to "destroy" the clickbait based ON THE TITLE AND DESCRIPTION provided. 
+` : ''}
 
 ${language === 'Turkish' ? `
 Örnek:
@@ -153,8 +213,8 @@ Title: "I found the cure for laziness"
 Output: "He says the cure is just waking up at 5 AM. Saved you 10 minutes."
 `}
 
-Here is the transcript:
-${transcriptText.substring(0, 30000)} // Limiting to 30k chars for safety
+Here is the data:
+${transcriptText.substring(0, 30000)}
 `;
 
         const result = await model.generateContent(prompt);
