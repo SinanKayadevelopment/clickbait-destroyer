@@ -24,32 +24,63 @@ export async function POST(req: NextRequest) {
 
         let transcriptText = '';
         try {
-            console.log('Fetching transcript for:', videoId);
-            // Try English first, then Turkish as a fallback
-            let subtitles = [];
+            console.log('--- FETCHING TRANSCRIPT ---');
+            console.log('Video ID:', videoId);
+
+            // Attempt 1: youtube-caption-extractor (English)
             try {
-                subtitles = await getSubtitles({ videoID: videoId, lang: 'en' });
-            } catch (innerError) {
-                console.log('English subtitles not found, trying Turkish...');
+                console.log('Attempting youtube-caption-extractor (en)...');
+                const subtitles = await getSubtitles({ videoID: videoId, lang: 'en' });
+                if (subtitles && subtitles.length > 0) {
+                    transcriptText = subtitles.map((t: any) => t.text).join(' ');
+                    console.log('Success with youtube-caption-extractor (en)');
+                }
+            } catch (e) {
+                console.log('youtube-caption-extractor (en) failed');
+            }
+
+            // Attempt 2: youtube-caption-extractor (Turkish) fallback
+            if (!transcriptText) {
                 try {
-                    subtitles = await getSubtitles({ videoID: videoId, lang: 'tr' });
-                } catch (trError) {
-                    console.log('Turkish subtitles also not found.');
-                    throw new Error('No English or Turkish subtitles found.');
+                    console.log('Attempting youtube-caption-extractor (tr)...');
+                    const subtitles = await getSubtitles({ videoID: videoId, lang: 'tr' });
+                    if (subtitles && subtitles.length > 0) {
+                        transcriptText = subtitles.map((t: any) => t.text).join(' ');
+                        console.log('Success with youtube-caption-extractor (tr)');
+                    }
+                } catch (e) {
+                    console.log('youtube-caption-extractor (tr) failed');
                 }
             }
 
-            console.log('Transcript chunks found:', subtitles.length);
-            transcriptText = subtitles.map((t: any) => t.text).join(' ');
-        } catch (e) {
-            console.error('Transcript fetch failed:', e);
-            return NextResponse.json({
-                error: 'Could not fetch transcript. Please ensure the video has English or Turkish captions.'
-            }, { status: 400 });
-        }
+            // Attempt 3: youtube-transcript (More robust in some cloud environments)
+            if (!transcriptText) {
+                try {
+                    console.log('Attempting youtube-transcript fallback...');
+                    const { YoutubeTranscript } = await import('youtube-transcript');
+                    const subtitles = await YoutubeTranscript.fetchTranscript(videoId);
+                    if (subtitles && subtitles.length > 0) {
+                        transcriptText = subtitles.map((t: any) => t.text).join(' ');
+                        console.log('Success with youtube-transcript');
+                    }
+                } catch (e) {
+                    console.log('youtube-transcript failed:', e instanceof Error ? e.message : e);
+                }
+            }
 
-        if (!transcriptText || transcriptText.trim().length === 0) {
-            return NextResponse.json({ error: 'This video has no transcript data available.' }, { status: 400 });
+            if (!transcriptText) {
+                console.error('All transcript fetch attempts failed for:', videoId);
+                return NextResponse.json({
+                    error: 'Transcript available but could not be fetched by the server. YouTube might be blocking the request. Try a different video or wait a moment.'
+                }, { status: 400 });
+            }
+
+            console.log('Final Transcript Length:', transcriptText.length);
+        } catch (e) {
+            console.error('Unexpected error in transcript logic:', e);
+            return NextResponse.json({
+                error: 'An unexpected error occurred while fetching the transcript.'
+            }, { status: 500 });
         }
 
         // Initialize Gemini
