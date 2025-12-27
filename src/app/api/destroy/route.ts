@@ -151,6 +151,17 @@ export async function POST(req: NextRequest) {
             if (!transcriptText || transcriptText.trim().length < 50) {
                 console.log('--- ALL TRANSCRIPT ATTEMPTS FAILED. RESORTING TO METADATA ---');
                 try {
+                    // Step 1: oEmbed for Title (Very reliable, official endpoint)
+                    console.log('Fetching oEmbed for title...');
+                    const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+                    let oTitle = '';
+                    if (oembedRes.ok) {
+                        const oData = await oembedRes.json();
+                        oTitle = oData.title;
+                        console.log('oEmbed Title:', oTitle);
+                    }
+
+                    // Step 2: Meta tags for Description (and backup Title)
                     const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
                         headers: {
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
@@ -158,26 +169,22 @@ export async function POST(req: NextRequest) {
                     });
                     const html = await pageRes.text();
 
-                    // Robust Extraction: meta tags are reliable for title/desc
                     const titleMeta = html.match(/<meta\s+name="title"\s+content="(.*?)">/) ||
-                        html.match(/<meta\s+property="og:title"\s+content="(.*?)">/);
+                        html.match(/<meta\s+property="og:title"\s+content="(.*?)">/) ||
+                        html.match(/<title>(.*?)<\/title>/);
+
                     const descMeta = html.match(/<meta\s+name="description"\s+content="(.*?)">/) ||
-                        html.match(/<meta\s+property="og:description"\s+content="(.*?)">/);
+                        html.match(/<meta\s+property="og:description"\s+content="(.*?)">/) ||
+                        html.match(/"shortDescription":"(.*?)"/);
 
-                    let title = titleMeta ? titleMeta[1] : '';
-                    let description = descMeta ? descMeta[1] : '';
+                    const title = oTitle || (titleMeta ? titleMeta[1].replace(' - YouTube', '') : 'No Title Found');
+                    let description = descMeta ? descMeta[1].substring(0, 1000) : 'No description available';
 
-                    if (!title) {
-                        const titleMatch = html.match(/<title>(.*?)<\/title>/);
-                        title = titleMatch ? titleMatch[1].replace(' - YouTube', '') : 'Unknown Title';
-                    }
-                    if (!description) {
-                        const descMatch = html.match(/"shortDescription":"(.*?)"/);
-                        description = descMatch ? descMatch[1].substring(0, 1000) : 'No description available';
-                    }
+                    // Cleanup common JSON/HTML escapes
+                    description = description.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/&amp;/g, '&');
 
-                    transcriptText = `VIDEO TITLE: ${title}\n\nVIDEO DESCRIPTION: ${description}\n\n[SYSTEM NOTE: Full transcript was blocked by YouTube. USE THE TITLE AND DESCRIPTION TO DESTROY THE CLICKBAIT.]`;
-                    console.log('Using Robust Metadata Fallback');
+                    transcriptText = `VIDEO_TITLE: ${title}\n\nVIDEO_DESCRIPTION: ${description}\n\n[SYSTEM_LOG: Transcript blocked. Analysis based on metadata only.]`;
+                    console.log('Metadata Fallback Success');
                 } catch (e) {
                     console.error('Metadata fallback failed:', e);
                 }
@@ -208,8 +215,8 @@ RULES:
 3. Be sarcastic and edgy.
 4. Respond ONLY in ${language}.
 
-${transcriptText.includes('[SYSTEM NOTE:') ? `
-NOTE: Only metadata (title/description) is available. Analyze it to reveal the "bait".
+${transcriptText.includes('[SYSTEM_LOG:') ? `
+STRICT NOTE: Full transcript was blocked. Analyze the VIDEO_TITLE and VIDEO_DESCRIPTION provided below to explain the clickbait or answer the video's implied question. Do NOT say "it's empty". Guess based on the title if necessary.
 ` : ''}
 
 DATA TO ANALYZE:
