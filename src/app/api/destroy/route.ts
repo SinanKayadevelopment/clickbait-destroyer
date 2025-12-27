@@ -158,32 +158,41 @@ export async function POST(req: NextRequest) {
                     });
                     const html = await pageRes.text();
 
-                    const titleMatch = html.match(/<title>(.*?)<\/title>/);
-                    const descMatch = html.match(/"shortDescription":"(.*?)"/);
+                    // Robust Extraction: meta tags are reliable for title/desc
+                    const titleMeta = html.match(/<meta\s+name="title"\s+content="(.*?)">/) ||
+                        html.match(/<meta\s+property="og:title"\s+content="(.*?)">/);
+                    const descMeta = html.match(/<meta\s+name="description"\s+content="(.*?)">/) ||
+                        html.match(/<meta\s+property="og:description"\s+content="(.*?)">/);
 
-                    const title = titleMatch ? titleMatch[1].replace(' - YouTube', '') : 'Unknown Title';
-                    const description = descMatch ? descMatch[1].substring(0, 1000) : 'No description available';
+                    let title = titleMeta ? titleMeta[1] : '';
+                    let description = descMeta ? descMeta[1] : '';
 
-                    transcriptText = `[MODE: METADATA ONLY (Transcript blocked by YouTube)]\n\nVideo Title: ${title}\n\nVideo Description snippets: ${description}`;
-                    console.log('Using Metadata Fallback (Title/Description)');
+                    if (!title) {
+                        const titleMatch = html.match(/<title>(.*?)<\/title>/);
+                        title = titleMatch ? titleMatch[1].replace(' - YouTube', '') : 'Unknown Title';
+                    }
+                    if (!description) {
+                        const descMatch = html.match(/"shortDescription":"(.*?)"/);
+                        description = descMatch ? descMatch[1].substring(0, 1000) : 'No description available';
+                    }
+
+                    transcriptText = `VIDEO TITLE: ${title}\n\nVIDEO DESCRIPTION: ${description}\n\n[SYSTEM NOTE: Full transcript was blocked by YouTube. USE THE TITLE AND DESCRIPTION TO DESTROY THE CLICKBAIT.]`;
+                    console.log('Using Robust Metadata Fallback');
                 } catch (e) {
-                    console.error('Metadata fallback also failed');
+                    console.error('Metadata fallback failed:', e);
                 }
             }
 
-            if (!transcriptText || transcriptText.trim().length < 20) {
-                console.error('All transcript fetch attempts failed for:', videoId);
+            if (!transcriptText || transcriptText.trim().length < 10) {
                 return NextResponse.json({
-                    error: 'YouTube is completely blocking the server and no metadata could be retrieved. Please try again later or try a different video.'
+                    error: 'YouTube is completely blocking the server. Please try a different video or try again later.'
                 }, { status: 400 });
             }
 
             console.log('Final Data Length:', transcriptText.length);
         } catch (e) {
-            console.error('Unexpected error in transcript logic:', e);
-            return NextResponse.json({
-                error: 'An unexpected error occurred while fetching the transcript.'
-            }, { status: 500 });
+            console.error('Unexpected fatal error in transcript logic:', e);
+            return NextResponse.json({ error: 'Fatal error fetching video data.' }, { status: 500 });
         }
 
         // Initialize Gemini
@@ -191,29 +200,19 @@ export async function POST(req: NextRequest) {
         const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
         const prompt = `
-You are a Clickbait Destroyer. The user will give you a YouTube video transcript OR metadata (title/description). 
-Your job is to find the specific answer to the video's implied hook or title. 
-Do NOT summarize the whole video. Just answer the question or reveal the secret immediately. 
-Be sarcastic and brief. 
+You are a "De-Clickbaiter". Your mission is to reveal the actual answer/secret behind a YouTube video's clickbait title.
 
-CRITICAL: You MUST respond in ${language}.
+RULES:
+1. Reveal the truth IMMEDIATELY. 
+2. Be brief (1-2 sentences).
+3. Be sarcastic and edgy.
+4. Respond ONLY in ${language}.
 
-${transcriptText.startsWith('[MODE: METADATA ONLY') ? `
-IMPORTANT: You don't have the full transcript because YouTube blocked the fetch.
-Try to "destroy" the clickbait based ON THE TITLE AND DESCRIPTION provided. 
+${transcriptText.includes('[SYSTEM NOTE:') ? `
+NOTE: Only metadata (title/description) is available. Analyze it to reveal the "bait".
 ` : ''}
 
-${language === 'Turkish' ? `
-Örnek:
-Başlık: "Tembelliğin çözümünü buldum"
-Çıktı: "Çözümün sadece sabah 5'te kalkmak olduğunu söylüyor. 10 dakikanı kurtardım."
-` : `
-Example: 
-Title: "I found the cure for laziness"
-Output: "He says the cure is just waking up at 5 AM. Saved you 10 minutes."
-`}
-
-Here is the data:
+DATA TO ANALYZE:
 ${transcriptText.substring(0, 30000)}
 `;
 

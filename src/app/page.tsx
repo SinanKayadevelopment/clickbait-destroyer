@@ -8,6 +8,7 @@ export default function Home() {
   const [url, setUrl] = useState('');
   const [language, setLanguage] = useState<'English' | 'Turkish'>('English');
   const [isLoading, setIsLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     truth: string;
@@ -19,10 +20,24 @@ export default function Home() {
     if (!url) return;
 
     setIsLoading(true);
+    setProgress(0);
     setError(null);
     setResult(null);
 
     const apiKey = localStorage.getItem('gemini_api_key');
+
+    // Simulate progress
+    const progressInterval = setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= 92) {
+          clearInterval(progressInterval);
+          return prev;
+        }
+        // Slower progress as it gets higher
+        const increment = prev < 50 ? 5 : (prev < 80 ? 2 : 0.5);
+        return Math.min(prev + increment, 95);
+      });
+    }, 200);
 
     try {
       const response = await fetch('/api/destroy', {
@@ -37,10 +52,12 @@ export default function Home() {
         throw new Error(data.error || 'Something went wrong');
       }
 
+      setProgress(100);
       setResult(data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
+      clearInterval(progressInterval);
       setIsLoading(false);
     }
   };
@@ -116,20 +133,44 @@ export default function Home() {
           </div>
         )}
 
-        {/* Loading Skeleton */}
+        {/* Loading Skeleton & Progress */}
         {isLoading && (
-          <div className="w-full max-w-2xl mt-12 space-y-4 animate-pulse">
-            <div className="h-24 bg-white/5 border border-white/10 rounded-2xl flex gap-4 p-4">
-              <div className="w-32 h-full bg-white/5 rounded-lg"></div>
-              <div className="flex-1 space-y-2 py-2">
-                <div className="h-3 w-1/4 bg-white/10 rounded"></div>
-                <div className="h-4 w-3/4 bg-white/10 rounded"></div>
+          <div className="w-full max-w-2xl mt-12 space-y-6">
+            {/* Real Progress Bar */}
+            <div className="space-y-3">
+              <div className="flex justify-between items-end">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#e63946]" />
+                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40">
+                    Analyzing Video Content...
+                  </span>
+                </div>
+                <span className="text-xl font-black italic tracking-tighter text-[#e63946]">
+                  {Math.round(progress)}%
+                </span>
+              </div>
+              <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden border border-white/10 p-[1px]">
+                <div
+                  className="h-full bg-gradient-to-r from-[#e63946] to-[#ff6b6b] rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${progress}%` }}
+                ></div>
               </div>
             </div>
-            <div className="h-40 bg-white/5 border border-white/10 rounded-2xl p-8 space-y-4">
-              <div className="h-3 w-20 bg-white/10 rounded"></div>
-              <div className="h-8 w-full bg-white/10 rounded"></div>
-              <div className="h-8 w-2/3 bg-white/10 rounded"></div>
+
+            {/* Skeleton Background */}
+            <div className="animate-pulse space-y-4">
+              <div className="h-24 bg-white/5 border border-white/10 rounded-2xl flex gap-4 p-4">
+                <div className="w-32 h-full bg-white/5 rounded-lg"></div>
+                <div className="flex-1 space-y-2 py-2">
+                  <div className="h-3 w-1/4 bg-white/10 rounded"></div>
+                  <div className="h-4 w-3/4 bg-white/10 rounded"></div>
+                </div>
+              </div>
+              <div className="h-40 bg-white/5 border border-white/10 rounded-2xl p-8 space-y-4">
+                <div className="h-3 w-20 bg-white/10 rounded"></div>
+                <div className="h-8 w-full bg-white/10 rounded"></div>
+                <div className="h-8 w-2/3 bg-white/10 rounded"></div>
+              </div>
             </div>
           </div>
         )}
