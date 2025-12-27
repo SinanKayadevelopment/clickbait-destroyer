@@ -68,10 +68,58 @@ export async function POST(req: NextRequest) {
                 }
             }
 
+            // Attempt 4: Manual Scraping (Directly from page source)
             if (!transcriptText) {
+                try {
+                    console.log('Attempting Manual Scraping (Last Resort)...');
+                    const videoPageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                            'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8',
+                        }
+                    });
+                    const html = await videoPageRes.text();
+
+                    // Look for ytInitialPlayerResponse
+                    const playerRegex = /var ytInitialPlayerResponse\s*=\s*({.+?});/;
+                    const playerMatch = html.match(playerRegex);
+
+                    if (playerMatch && playerMatch[1]) {
+                        const playerResponse = JSON.parse(playerMatch[1]);
+                        const captionTracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+                        if (captionTracks && captionTracks.length > 0) {
+                            // Order: Preferred Lang -> First available
+                            const track = captionTracks.find((t: any) => t.languageCode === 'en') ||
+                                captionTracks.find((t: any) => t.languageCode === 'tr') ||
+                                captionTracks[0];
+
+                            console.log('Manual scraping found track:', track.languageCode);
+                            const transcriptRes = await fetch(track.baseUrl);
+                            const transcriptXml = await transcriptRes.text();
+
+                            // Simple XML parsing/stripping
+                            const textSegments = transcriptXml.match(/<text[^>]*>([\s\S]*?)<\/text>/g);
+                            if (textSegments) {
+                                transcriptText = textSegments
+                                    .map(seg => seg.replace(/<text[^>]*>([\s\S]*?)<\/text>/, '$1'))
+                                    .map(txt => txt.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>'))
+                                    .join(' ');
+                                console.log('Success with Manual Scraping');
+                            }
+                        }
+                    } else {
+                        console.log('No ytInitialPlayerResponse found in manual fetch');
+                    }
+                } catch (e) {
+                    console.log('Manual scraping failed:', e instanceof Error ? e.message : e);
+                }
+            }
+
+            if (!transcriptText || transcriptText.trim().length < 50) {
                 console.error('All transcript fetch attempts failed for:', videoId);
                 return NextResponse.json({
-                    error: 'Transcript available but could not be fetched by the server. YouTube might be blocking the request. Try a different video or wait a moment.'
+                    error: 'YouTube is blocking cloud servers (Vercel) from fetching this script. This usually happens with auto-generated captions. Try a video with manual captions or a more popular video.'
                 }, { status: 400 });
             }
 
