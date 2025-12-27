@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dont-get-clickbaited.vercel.app/sitemap.xml

@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --background: #0f0f0f;
+  --foreground: #ffffff;
+  --accent: #e63946;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.hacker-text {
+  font-family: var(--font-mono);
+}
